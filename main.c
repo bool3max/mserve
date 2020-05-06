@@ -130,7 +130,6 @@ static void * handle_client_request(void *_request_string) {
     fprintf(stdout, PROGNAME ": received new request: (%s, %s) -- handling\n", request_pathname, request_fifo_name);
 
     // open requested file for reading
-    
     int file_fd = open(request_pathname, O_RDONLY);
     if(file_fd == -1) {
         perror(PROGNAME ": error opening requsted file");
