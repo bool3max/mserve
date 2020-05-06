@@ -1,4 +1,5 @@
 // mserve - an attemp to build a simple mqueue request based threaded file server, for practice of mqueues, pipes, fifos, as well as pthreads and other low level concepts
+// only on threadpool
 
 #include <stdlib.h>
 #include <stdio.h>
