@@ -11,6 +11,8 @@ Currently trying to implement a thread-pool based queue to avoid the overhead of
 Here are some benchmarks showing before and after results after implementing threading: 
 
 ```
+time it takes 10 clients to fully receive and void a 1.7GiB file from mserve -- see client.c
+
 single-threaded:                  5732.4ms @ 1.7GiB with 128KiB buffer size (i5 6600 @ 3.9Ghz, 2133Mhz RAM, kernel 5.6.7, compiled with gcc 9.3.0 w/ -O3)
 multi-threaded (no thread pool):  2539.4ms @ 1.7GiB with 128KiB buffer size (i5 6600 @ 3.9Ghz, 2133Mhz RAM, kernel 5.6.7, compiled with gcc 9.3.0 w/ -O3)
 ```
