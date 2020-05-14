@@ -1,5 +1,4 @@
 // mserve - an attemp to build a simple mqueue request based threaded file server, for practice of mqueues, pipes, fifos, as well as pthreads and other low level concepts
-// only on threadpool
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -28,6 +27,9 @@ static const char *_mq_name; // so that the SIGINT handler can unlink the queue 
 static long _mqueue_max_msg_count,
             _mqueue_max_msg_size,
             _part_delim_alloc_size;
+
+#define N_POOL_START 10
+static pthread_t _threadpool[N_POOL_START];
 
 int main(int argc, char **argv) {
     /*
@@ -74,11 +76,21 @@ int main(int argc, char **argv) {
         0
     };
 
+    // open the request mqueue before polling for requests
     mqd_t request_mqueue = mq_open(mq_name_feed, O_RDONLY | O_CREAT, MQUEUE_NODE_PERMISSIONS, &mq_attributes);
     if(request_mqueue == -1) {
         // failed creating or opening mqueue
         perror(PROGNAME ": failed creating mqueue");
         return EXIT_FAILURE;
+    }
+
+    // initialize thread pool with a certain amount of threads at the start
+    for (size_t i = 0; i < N_POOL_START; i++) {
+        int ret = pthread_create(_threadpool + i, NULL, threadpool_worker, NULL);
+        if(!ret) {
+            fprintf(stderr, PROGNME ": error spawning new worker thread: error code %d\n", ret);
+            continue;
+        }
     }
 
     fprintf(stdout, "mserve: polling for requests...\n");
@@ -110,6 +122,10 @@ int main(int argc, char **argv) {
     }
 
     return EXIT_SUCCESS;
+}
+
+static void * threadpool_worker(void *arg) {
+    // sleep until we receive a signal to process a new request from the main thread
 }
 
 static void * handle_client_request(void *_request_string) {
