@@ -18,18 +18,24 @@
 #define REQUEST_STRING_DELIM ";" // a string literal since I pass it to strtok
 #define DEFAULT_BUFSIZE 131072 // 128k (KiB), 2^17
 
+#define N_POOL_MAX 10
+#define SIGWORKPENDING (SIGRTMIN + 1) // sent to worker threads by the parent when there is work to be done
+
 ///
 static bool parse_mqueue_request_string(char *req, char *ret[2]); 
 static void * handle_client_request(void *); 
 static void handle_sigint(int num); 
+static void * threadpool_worker(void *arg); 
 
 static const char *_mq_name; // so that the SIGINT handler can unlink the queue -- includes prefixed "/"
 static long _mqueue_max_msg_count,
             _mqueue_max_msg_size,
             _part_delim_alloc_size;
 
-#define N_POOL_START 10
-static pthread_t _threadpool[N_POOL_START];
+static pthread_t _threadpool[N_POOL_MAX], // thread pool ids
+                 _threadpool_available[N_POOL_MAX]; // ids of all currently available threads (those ready to do work)
+
+static sigset_t _worker_set; // signal set for which worker threads wait on
 
 int main(int argc, char **argv) {
     /*
@@ -51,10 +57,16 @@ int main(int argc, char **argv) {
 
     // block SIGPIPE (prevent it from terminating the process) -- instead write(2) fails with the EPIPE error
     // I see no reason for SIGPIPE to happen though, unless a client process crashes or is deliberately killed after creating and opening the pipe but before the transfer is finished
+    // then - the server would attemp to write to a pipe that has no one connected to the read end, i.e. no file descriptor on the system reffering to the read end of the pipe
     sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, SIGPIPE);
     sigprocmask(SIG_BLOCK, &set, NULL);
+    //
+    
+    // initialize set on which worker threads will wait upon
+    sigemptyset(&_worker_set);
+    sigaddset(&_worker_set, SIGWORKPENDING);
     //
 
     char mq_name_feed[strlen(argv[1]) + 2];
@@ -85,12 +97,15 @@ int main(int argc, char **argv) {
     }
 
     // initialize thread pool with a certain amount of threads at the start
-    for (size_t i = 0; i < N_POOL_START; i++) {
+    for (size_t i = 0; i < N_POOL_MAX; i++) {
         int ret = pthread_create(_threadpool + i, NULL, threadpool_worker, NULL);
         if(!ret) {
-            fprintf(stderr, PROGNME ": error spawning new worker thread: error code %d\n", ret);
+            fprintf(stderr, PROGNAME ": error spawning new worker thread: error code %d\n", ret);
             continue;
         }
+
+        // add thread to array of available threads -- since all are avaiable at start
+        _threadpool_available[i] = ret;
     }
 
     fprintf(stdout, "mserve: polling for requests...\n");
@@ -105,27 +120,72 @@ int main(int argc, char **argv) {
         ssize_t last_request_len; // ret value of mq_receive - the length of the received message or -1 in case of error
 
         last_request_len = mq_receive(request_mqueue, request_string, _mqueue_max_msg_size, NULL);
-        // dbg: we know that the received strings are not corrupt, it's only once they start going to new threads that they repeat
 
         if(last_request_len == -1) {
             perror(PROGNAME ": failed receiving request from mqueue");
             continue;
         }
 
-        pthread_t pt1;
-        int res = pthread_create(&pt1, NULL, handle_client_request, request_string); // spawn a worker thread to take care of the request
-        if(res) {
-            fprintf(stderr, PROGNAME ": error spawning worker thread, error number %d\n", res);
+        pthread_t current_worker = 0;
+        for(size_t i = 0; i < N_POOL_MAX; i++) {
+            // find the first thread available for the job 
+            if(_threadpool_available[i] != 0) {
+                current_worker = _threadpool_available[i];
+                break;
+            }
+        }
+
+        if(current_worker == 0) {
+            // couldn't find an available thread TODO: DO SOMETHING, right now the clients just waits on the FIFO forever
+            free(request_string);
+            fprintf(stderr, PROGNAME "couldn't find available worker thread for request: %s\n", request_string);
             continue;
         }
 
+        int ret = pthread_kill(current_worker, SIGWORKPENDING);
+        if(ret != 0) {
+            perror(PROGNAME ": failed signalling worker thread to process request");
+            free(request_string);
+        }
     }
 
     return EXIT_SUCCESS;
 }
 
 static void * threadpool_worker(void *arg) {
-    // sleep until we receive a signal to process a new request from the main thread
+    // sleep until we receive a signal to process a new request from the main thread    
+    int sig; 
+    while((sig = sigwaitinfo(&_worker_set, NULL)) != -1) {
+        // synchronously wait for the main thread to signal us to process a request
+        
+        
+    }
+
+    perror("worker thread: failed waiting on set");
+
+    return NULL;
+}
+
+static void threadpool_toggleavail(void) {
+    pthread_t *last_available = NULL,
+               me = pthread_self();
+    bool found_myself = false;
+
+    for (size_t i = 0; i < N_POOL_MAX; i++) {
+        if(_threadpool_available[i] == 0) {
+            last_available = &_threadpool_available[i];
+            continue;
+        }
+            
+        if(pthread_equal(_threadpool_available[i], me)) {
+            // found myself in the pool of available threads, toggle
+            _threadpool_available[i] = 0;
+            return;
+        }
+    }
+
+    // haven't found ourselves in the available pool, which means that we were previously unavailable and we'll take the first empty available spot
+    *last_available = me;            
 }
 
 static void * handle_client_request(void *_request_string) {
