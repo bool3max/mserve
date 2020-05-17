@@ -23,9 +23,12 @@
 
 ///
 static bool parse_mqueue_request_string(char *req, char *ret[2]); 
-static void * handle_client_request(void *); 
+static void * handle_client_request(char *request_string); 
 static void handle_sigint(int num); 
 static void * threadpool_worker(void *arg); 
+static void threadpool_toggleavail(void);; 
+static char * grq_consume(void);
+static bool grq_push(char *req);
 
 static const char *_mq_name; // so that the SIGINT handler can unlink the queue -- includes prefixed "/"
 static long _mqueue_max_msg_count,
@@ -34,8 +37,10 @@ static long _mqueue_max_msg_count,
 
 static pthread_t _threadpool[N_POOL_MAX], // thread pool ids
                  _threadpool_available[N_POOL_MAX]; // ids of all currently available threads (those ready to do work)
-
 static sigset_t _worker_set; // signal set for which worker threads wait on
+
+static char *_request_queue[N_POOL_MAX]; // all currently pending requests - the main thread pushes a new one here as soon as a new one becomes available - 
+
 
 int main(int argc, char **argv) {
     /*
@@ -61,6 +66,7 @@ int main(int argc, char **argv) {
     sigset_t set;
     sigemptyset(&set);
     sigaddset(&set, SIGPIPE);
+    sigaddset(&set, SIGWORKPENDING);
     sigprocmask(SIG_BLOCK, &set, NULL);
     //
     
@@ -79,7 +85,7 @@ int main(int argc, char **argv) {
     _mqueue_max_msg_size   = atol(argv[3]);
     _part_delim_alloc_size = ((_mqueue_max_msg_size - 2) / 2) + 1;
 
-    fprintf(stdout, "mserve started w/ parameters: \n\tMAX_MSG: %ld\n\tMAX_MSG_SIZE: %ld\n-----------------------------\n", _mqueue_max_msg_count, _mqueue_max_msg_size);
+    fprintf(stdout, "mserve started w/ parameters: \n\tMAX_MSG: %ld\n\tMAX_MSG_SIZE: %ld\n\tthread pool count: %d\n-----------------------------\n", _mqueue_max_msg_count, _mqueue_max_msg_size, N_POOL_MAX);
 
     const struct mq_attr mq_attributes = {
         0, 
@@ -99,16 +105,16 @@ int main(int argc, char **argv) {
     // initialize thread pool with a certain amount of threads at the start
     for (size_t i = 0; i < N_POOL_MAX; i++) {
         int ret = pthread_create(_threadpool + i, NULL, threadpool_worker, NULL);
-        if(!ret) {
+        if(ret) {
             fprintf(stderr, PROGNAME ": error spawning new worker thread: error code %d\n", ret);
             continue;
         }
 
         // add thread to array of available threads -- since all are avaiable at start
-        _threadpool_available[i] = ret;
+        _threadpool_available[i] = _threadpool[i];
     }
 
-    fprintf(stdout, "mserve: polling for requests...\n");
+    fprintf(stdout, "mserve: polling for requests...\n-----------------------------\n");
 
     while(1) {
         char *request_string = malloc(_mqueue_max_msg_size); // buffer for the string request message from the mqueue
@@ -118,13 +124,21 @@ int main(int argc, char **argv) {
         }
 
         ssize_t last_request_len; // ret value of mq_receive - the length of the received message or -1 in case of error
-
         last_request_len = mq_receive(request_mqueue, request_string, _mqueue_max_msg_size, NULL);
-
         if(last_request_len == -1) {
             perror(PROGNAME ": failed receiving request from mqueue");
             continue;
         }
+
+        // successfully received new request from mqueue - push it to grq
+
+        if(!grq_push(request_string)) {
+            fprintf(stderr, PROGNAME ": failed pushing request %s to grq - no space in queue\n", request_string);
+            free(request_string);
+            continue;
+        }
+
+        // request is now in grq - find first available worker and signal it to begin processing a request from the grq
 
         pthread_t current_worker = 0;
         for(size_t i = 0; i < N_POOL_MAX; i++) {
@@ -136,9 +150,8 @@ int main(int argc, char **argv) {
         }
 
         if(current_worker == 0) {
-            // couldn't find an available thread TODO: DO SOMETHING, right now the clients just waits on the FIFO forever
-            free(request_string);
-            fprintf(stderr, PROGNAME "couldn't find available worker thread for request: %s\n", request_string);
+            // couldn't find an available thread TODO:
+            fprintf(stderr, PROGNAME ": couldn't find available worker thread for request: %s\n", request_string);
             continue;
         }
 
@@ -152,13 +165,52 @@ int main(int argc, char **argv) {
     return EXIT_SUCCESS;
 }
 
+static bool grq_push(char *req) {
+    // push a new request to the global request queue - returns false if the queue is full
+
+    char **first_avail = NULL; // first available spot
+    
+    for(size_t i = 0; i < N_POOL_MAX; i++) {
+        if(_request_queue[i] == NULL) {
+            first_avail = _request_queue + i;
+            break;
+        }
+    }
+
+    if(!first_avail) return false;
+
+    *first_avail = req; 
+    return true;
+}
+
+static char * grq_consume(void) {
+    // allocate and return address of new buffer representing the first string in the grq. this buffer must be freed by the caller once it is done with.
+    char *buf = NULL;
+    for(size_t i = 0; i < N_POOL_MAX; i++) {
+        if(_request_queue[i] != NULL) {
+            buf = strndup(_request_queue[i], _mqueue_max_msg_size);
+            _request_queue[i] = NULL;
+            break;
+        }
+    }
+
+    return buf;
+}
+
 static void * threadpool_worker(void *arg) {
     // sleep until we receive a signal to process a new request from the main thread    
     int sig; 
     while((sig = sigwaitinfo(&_worker_set, NULL)) != -1) {
         // synchronously wait for the main thread to signal us to process a request
+
+        threadpool_toggleavail();
         
-        
+        char *request_string = grq_consume(); // grq_consume() can return NULL, but in practice I don't think that would ever happen since a worker gets signalled whenever a new request arrives into the grq
+        handle_client_request(request_string); 
+
+        free(request_string);
+
+        threadpool_toggleavail();
     }
 
     perror("worker thread: failed waiting on set");
@@ -188,11 +240,9 @@ static void threadpool_toggleavail(void) {
     *last_available = me;            
 }
 
-static void * handle_client_request(void *_request_string) {
+static void * handle_client_request(char *request_string) {
     // _request_string is a pointer to a string in the main event loop of main. that string is stored on the stack and is thus "voided" once a new request is received
     // if the new worker thread is not fast enough to parse it before a new request comes in, that can result in problems, thus I just create a local copy on the stack of the new worker thread and safely parse it from there
-
-    char *request_string = _request_string;
 
     char request_pathname[_part_delim_alloc_size],
          request_fifo_name[_part_delim_alloc_size];
@@ -260,7 +310,6 @@ static void * handle_client_request(void *_request_string) {
     close(file_fd);
     close(fifo_fd);
     free(buf);
-    free(request_string);
 
     return NULL;
 }
