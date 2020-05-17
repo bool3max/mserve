@@ -25,7 +25,7 @@
 
 void mserve_request(const mqd_t);
 
-#define N_REQUESTS 10
+#define N_REQUESTS 20
 
 int main(void) {
     mqd_t mqd = mq_open(MSERVE_MQUEUE_NAME, O_WRONLY);
