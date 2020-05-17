@@ -18,7 +18,7 @@
 #define REQUEST_STRING_DELIM ";" // a string literal since I pass it to strtok
 #define DEFAULT_BUFSIZE 131072 // 128k (KiB), 2^17
 
-#define N_POOL_MAX 10
+#define N_POOL_MAX 100
 #define SIGWORKPENDING (SIGRTMIN + 1) // sent to worker threads by the parent when there is work to be done
 
 ///
@@ -39,7 +39,7 @@ static pthread_t _threadpool[N_POOL_MAX], // thread pool ids
                  _threadpool_available[N_POOL_MAX]; // ids of all currently available threads (those ready to do work)
 static sigset_t _worker_set; // signal set for which worker threads wait on
 
-static char *_request_queue[N_POOL_MAX]; // all currently pending requests - the main thread pushes a new one here as soon as a new one becomes available - 
+static char *_request_queue[N_POOL_MAX]; // all currently pending requests - the main thread pushes a new one here as soon as a new one becomes available
 
 
 int main(int argc, char **argv) {
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
         }
 
         if(current_worker == 0) {
-            // couldn't find an available thread TODO:
+            // couldn't find an available thread
             fprintf(stderr, PROGNAME ": couldn't find available worker thread for request: %s\n", request_string);
             continue;
         }

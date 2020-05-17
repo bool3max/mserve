@@ -1,5 +1,0 @@
-mserve: the amount of time it takes 10 processes to fetch and void a file from mserve
-
-single-threaded:                                 5732.4ms @ 1.7GiB with 128KiB buffer size (i5 6600 @ 3.9Ghz, 2133Mhz RAM, kernel 5.6.7, compiled with gcc 9.3.0 w/ -O3)
-multi-threaded (no thread pool):                 2539.4ms @ 1.7GiB with 128KiB buffer size (i5 6600 @ 3.9Ghz, 2133Mhz RAM, kernel 5.6.7, compiled with gcc 9.3.0 w/ -O3) - each thread gets copy of message buffer on heap
-multi-threaded (stupid thread pool, nonoptimal): 
