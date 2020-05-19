@@ -1,4 +1,6 @@
 // mserve - an attemp to build a simple mqueue request based threaded file server, for practice of mqueues, pipes, fifos, as well as pthreads and other low level concepts
+// TODO: if all worker threads are busy at the time a new request is received, that request WILL get pushed into the GRQ, but no thread will ever pick it up as worker threads only read the queue
+// on signals sent by the master thread, which does NOT check the grq. worker threads need to be reworked to periodically read the GRQ
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -18,7 +20,8 @@
 #define REQUEST_STRING_DELIM ";" // a string literal since I pass it to strtok
 #define DEFAULT_BUFSIZE 131072 // 128k (KiB), 2^17
 
-#define N_POOL_MAX 100
+#define N_POOL_MAX 20
+#define GRQ_MAX 512
 #define SIGWORKPENDING (SIGRTMIN + 1) // sent to worker threads by the parent when there is work to be done
 
 ///
@@ -39,7 +42,7 @@ static pthread_t _threadpool[N_POOL_MAX], // thread pool ids
                  _threadpool_available[N_POOL_MAX]; // ids of all currently available threads (those ready to do work)
 static sigset_t _worker_set; // signal set for which worker threads wait on
 
-static char *_request_queue[N_POOL_MAX]; // all currently pending requests - the main thread pushes a new one here as soon as a new one becomes available
+static char *_request_queue[GRQ_MAX]; // all currently pending requests - the main thread pushes a new one here as soon as a new one becomes available
 
 
 int main(int argc, char **argv) {
@@ -170,7 +173,7 @@ static bool grq_push(char *req) {
 
     char **first_avail = NULL; // first available spot
     
-    for(size_t i = 0; i < N_POOL_MAX; i++) {
+    for(size_t i = 0; i < GRQ_MAX; i++) {
         if(_request_queue[i] == NULL) {
             first_avail = _request_queue + i;
             break;
@@ -186,7 +189,7 @@ static bool grq_push(char *req) {
 static char * grq_consume(void) {
     // allocate and return address of new buffer representing the first string in the grq. this buffer must be freed by the caller once it is done with.
     char *buf = NULL;
-    for(size_t i = 0; i < N_POOL_MAX; i++) {
+    for(size_t i = 0; i < GRQ_MAX; i++) {
         if(_request_queue[i] != NULL) {
             buf = strndup(_request_queue[i], _mqueue_max_msg_size);
             _request_queue[i] = NULL;

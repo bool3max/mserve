@@ -25,7 +25,7 @@
 
 void mserve_request(const mqd_t);
 
-#define N_REQUESTS 20
+#define N_REQUESTS 20 
 
 int main(void) {
     mqd_t mqd = mq_open(MSERVE_MQUEUE_NAME, O_WRONLY);
@@ -55,7 +55,7 @@ int main(void) {
     }
 
     // spawned all processes
-    fprintf(stdout, "parent: successfully spawned all 10 children - began benchmarking\n");
+    fprintf(stdout, "parent: successfully spawned all %d children - began benchmarking\n", N_REQUESTS);
     struct timespec time_start,
                     time_end;
     clock_gettime(CLOCK_REALTIME, &time_start);
