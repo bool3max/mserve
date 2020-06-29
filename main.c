@@ -27,7 +27,7 @@ static void handle_sigint(int num);
 static void * threadpool_worker(void *arg); 
 /* static void threadpool_toggleavail(void);; */ 
 
-static char _mq_name[256]; // so that the SIGINT handler can unlink the queue -- includes prefixed "/"
+static char _mq_name[256]; // will include prefixed "/"
 static long _mqueue_max_msg_count,
             _mqueue_max_msg_size,
             _part_delim_alloc_size;
@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
 
     fprintf(stdout, "mserve started w/ parameters: \n\tMAX_MSG: %ld\n\tMAX_MSG_SIZE: %ld\n\tthread pool count: %d\n-----------------------------\n", _mqueue_max_msg_count, _mqueue_max_msg_size, N_POOL_MAX);
 
-    _mq_attributes = (struct mq_attr ){
+    _mq_attributes = (struct mq_attr) {
         0, 
         _mqueue_max_msg_count,
         _mqueue_max_msg_size,
@@ -131,7 +131,7 @@ static void * threadpool_worker(void *arg) {
         }
 
         // received new request, take care of it
-        handle_client_request(request_string);
+        void *res = handle_client_request(request_string);
     }
 
     return NULL;
@@ -169,7 +169,6 @@ static void * handle_client_request(char *request_string) {
     bool parse_ret = parse_mqueue_request_string(request_string, (char *[]) {request_pathname, request_fifo_name});
     if(!parse_ret) {
         fprintf(stderr, PROGNAME ": error parsing mqueue request string: %s\n", request_string);
-        free(request_string);
         return NULL;
     }
     
@@ -179,7 +178,6 @@ static void * handle_client_request(char *request_string) {
     int file_fd = open(request_pathname, O_RDONLY);
     if(file_fd == -1) {
         perror(PROGNAME ": error opening requsted file");
-        free(request_string);
         return NULL;
     }
 
@@ -193,7 +191,6 @@ static void * handle_client_request(char *request_string) {
     if(fifo_fd == -1) {
         perror(PROGNAME ": failed opening FIFO for writing");
         close(file_fd);
-        free(request_string);
         return NULL;
     }
 
@@ -202,7 +199,6 @@ static void * handle_client_request(char *request_string) {
         perror(PROGNAME ": failed allocating buffer");
         close(file_fd);
         close(fifo_fd);
-        free(request_string);
         return NULL;
     }
 
@@ -215,7 +211,6 @@ static void * handle_client_request(char *request_string) {
             // failed writing the batch of bytes received
             fprintf(stderr, PROGNAME ": failed writing to FIFO - request aborted (%s): %s\n", full_fifo_path, strerror(errno));
             free(buf);
-            free(request_string);
             close(file_fd);
             close(fifo_fd);
             return NULL;

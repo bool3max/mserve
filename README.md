@@ -17,7 +17,7 @@ I ran each implementation 5 times and took the average *not* counting the 1st ti
 single-threaded:                  11043.2ms @ 1.7GiB with 128KiB buffer size
 multi-threaded (no thread pool):  5851.8ms  @ 1.7GiB with 128KiB buffer size
 multi-threaded (thread pool 1):   5843.2ms  @ 1.7GiB with 128KiB buffer size
-multi-threaded (thread pool 2):         ms  @ 1.7GiB with 128KiB buffer size
+multi-threaded (thread pool 2):   5891.3ms  @ 1.7GiB with 128KiB buffer size
 
 test machine: (i5 6600 @ 3.9Ghz, 2133Mhz RAM, kernel 5.6.7, compiled with gcc 9.3.0 w/ -O3) 
 
